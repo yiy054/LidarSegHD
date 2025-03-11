@@ -1,84 +1,76 @@
-#FROM nvidia/cuda:11.0.3-cudnn8-devel-ubuntu20.04
-FROM nvidia/cuda:11.7.1-cudnn8-devel-ubuntu20.04
+# Use NVIDIA Jetson CUDA base image with PyTorch
+# FROM nvcr.io/nvidia/l4t-pytorch:r35.3.1-pth2.0-py3
+FROM dustynv/l4t-pytorch:r36.2.0
+# FROM nvcr.io/nvidia/l4t-jetpack:r36.3.0
+# Set non-interactive mode for apt
+ENV DEBIAN_FRONTEND=noninteractive
+ENV CUMM_CUDA_ARCH_LIST="8.7"
 
-# Just in case we need it
-ENV DEBIAN_FRONTEND='noninteractive'
+# Install basic dependencies
+RUN apt-get update && apt-get install -y \
+    python3 python3-dev python3-pip git wget unzip \
+    vim tmux build-essential ffmpeg libsm6 libxext6 \
+    libboost-all-dev cmake ninja-build && \
+    rm -rf /var/lib/apt/lists/*
 
-RUN apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys A4B469963BF863CC
-
-RUN apt update && apt-get upgrade -y
-RUN apt install -y python3 python3-dev python3-pip
+# ENV CC=gcc-9
+# ENV CXX=g++-9
+# Upgrade pip
 RUN pip3 install --upgrade pip
-RUN apt install -y git wget unzip 
-RUN apt-get install -y vim tmux
-RUN apt install -y build-essential
 
-# get newer version of cmake
-#RUN wget https://apt.kitware.com/kitware-archive.sh
-#RUN chmod +x kitware-archive.sh
-#RUN ./kitware-archive.sh
-
-## install conda
-RUN wget https://repo.anaconda.com/archive/Anaconda3-2023.03-1-Linux-x86_64.sh && \
-    bash Anaconda3-2023.03-1-Linux-x86_64.sh -b
-
-ENV PATH=$PATH:/root/anaconda3/bin/
-
-## Install Cylinder 3D
-WORKDIR /
-RUN git clone --recursive --depth 1 https://github.com/xinge008/Cylinder3D /root/Cylinder3D
+# Clone Cylinder3D repository
+WORKDIR /root
+RUN git clone --recursive --depth 1 https://github.com/xinge008/Cylinder3D
 WORKDIR /root/Cylinder3D
-COPY . .
 
-RUN conda create -n cylinder -y python=3.7 && \
-    conda init bash
+# Install Python dependencies
+RUN pip3 install numpy pyyaml cython tqdm strictyaml numba opencv-python-headless
+RUN pip3 install pccm==0.4.16 ccimport==0.4.4 wheel fire pybind11
+RUN pip3 uninstall -y cumm spconv || true
+RUN pip3 list | grep cumm || echo " No cumm found before install"
+RUN pip3 list | grep spconv || echo " No spconv found before install"
+RUN pip3 install torch-scatter -f https://data.pyg.org/whl/torch-2.0.0+nv22.10.html
 
-# make RUN commands use the new environment
-SHELL ["conda", "run", "--no-capture-output", "-n", "cylinder", "/bin/bash", "-c"]
-RUN echo 'conda activate cylinder' >> /root/.bashrc
 
-RUN yes | pip install --upgrade pip
+# Clone and install cumm
+RUN git clone -b v0.4.11 --recursive https://github.com/FindDefinition/cumm.git /root/cumm
+# RUN sed -i '/#include <cuda_bf16.hpp>/s/^/\/\/ /' /root/cumm/include/tensorview/dtypes.h && \
+#     sed -i '/struct bfloat16/,/};/s/^/\/\/ /' /root/cumm/include/tensorview/dtypes.h
+RUN cd /root/cumm && \
+    export CUMM_CUDA_ARCH_LIST="8.7" && \
+    pip3 install -e .
+RUN pip3 show cumm
+# RUN find /usr/local/lib/python3.10/dist-packages -type d -name 'cumm' -exec mkdir -p {}/include \;
+# RUN python3 -c "from cumm import tensorview as tv; tv.builder.build()" || echo "JIT build fallback skipped"
 
-RUN yes | pip install numpy
-RUN yes | pip install torch==1.13.1+cu117 --extra-index-url https://download.pytorch.org/whl/
-RUN yes | pip install pyyaml
-RUN yes | pip install cython
-RUN yes | conda install opencv
-#RUN yes | pip install opencv-python
-#RUN yes | pip install nuscenes-devkit==1.1.6
-RUN yes | pip install numba
-RUN yes | pip install strictyaml
-RUN yes | pip install tqdm
-RUN yes | pip install spconv-cu117
+# Clone and install spconv
+RUN git clone --recursive -b v1.2.1 https://github.com/yiy054/spconv.git /root/spconv && \
+    cd /root/spconv && \
+    pip3 install -e .
 
-RUN apt-get install -y ffmpeg libsm6 libxext6
+# Command '['ninja']' returned non-zero exit status 1.
+# RUN git clone https://github.com/FindDefinition/cumm.git /root/cumm
+# WORKDIR /root/cumm
+# RUN git checkout v0.3.7
+# ENV CUMM_CUDA_ARCH_LIST="8.7"
+# ENV CUMM_CUDA_VERSION="11.4"
+# RUN pip install -e . 
+# RUN python3 -c "import cumm"
 
-# Torch scatter
-RUN yes | pip install --no-index torch-scatter -f https://pytorch-geometric.com/whl/torch-1.13.1+cu117.html
+# RUN git clone https://github.com/traveller59/spconv.git /root/spconv
+# WORKDIR /root/spconv
+# RUN git checkout v2.2.6
+# RUN sed -i 's/, "cumm>=0.3.7"//g' pyproject.toml
+# RUN pip install -e . 
+# RUN python3 -c "import spconv"
 
-# SpConv
-# need to use SpConv 1 and hotfixes
-# see: https://github.com/traveller59/spconv/issues/58
-#RUN git clone --recursive https://github.com/traveller59/spconv.git /spconv
-#RUN wget -O hotfixes.zip https://github.com/traveller59/spconv/files/4658204/hotfixes.zip
-#RUN unzip hotfixes -d /hotfixes
-#WORKDIR /spconv
-#RUN git checkout 8da6f967fb9a054d8870c3515b1b44eca2103634 
-# needs to be done before we can apply the patches
-#RUN git config --global user.email "test@test.com"
-#RUN git config --global user.name "Test"
-#RUN git am /hotfixes/0001-fix-problem-with-torch-1.4.patch 
-#RUN git am /hotfixes/0001-Allow-to-specifiy-CUDA_ROOT-directory-and-pick-corre.patch
-#RUN yes | apt install -y libboost-all-dev cmake
+# RUN ls /usr/local/lib/python3.10/dist-packages/cumm*/cumm/core_cc* || echo "Still missing core_cc"
+
+# RUN python3 -c "import spconv.pytorch; print('[Check] spconv OK')"
+
+# Set CUDA environment variable
 ENV CUDA_ROOT=/usr/local/cuda
-#RUN yes | pip install wheel
-#WORKDIR /spconv/third_party
-#RUN git clone https://github.com/pybind/pybind11.git
-#WORKDIR /spconv
 
-# MAKE SURE TO RUN THIS COMMANDS AFTER in spconv
-# vim include/spconv/nms.h
-# include <iostream>
-#RUN python setup.py bdist_wheel
-#WORKDIR /spconv/dist
-#RUN pip install *.whl
+# Set entrypoint
+WORKDIR /root/Cylinder3D
+CMD ["/bin/bash"]
