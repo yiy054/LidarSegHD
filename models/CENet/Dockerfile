@@ -1,37 +1,33 @@
-# CENET
+# Use NVIDIA L4T PyTorch base image compatible with Jetson Orin
+# for nvcr.io/nvidia/l4t-pytorch:r35.2.1-pth1.12-py3 not found: manifest unknown: manifest unknown
+# FROM nvcr.io/nvidia/l4t-pytorch:r35.2.1-pth1.12-py3 
+FROM dustynv/l4t-pytorch:r36.2.0
+# Set non-interactive mode for apt
+ENV DEBIAN_FRONTEND=noninteractive
 
-FROM nvidia/cuda:11.6.1-cudnn8-runtime-ubuntu20.04
+# Install basic dependencies
+RUN apt-get update && apt-get install -y \
+    git wget ffmpeg libsm6 libxext6 vim tmux \
+    && rm -rf /var/lib/apt/lists/*
 
-ENV DEBIAN_FRONTEND='noninteractive'
+# Clone CENet repository
+WORKDIR /root
+RUN git clone --depth=1 https://github.com/huixiancheng/CENet
 
-## apt installs
-RUN apt-get update && \
-    apt install -y git wget && \
-    apt-get install ffmpeg libsm6 libxext6 -y
+# Set working directory
+WORKDIR /root/CENet
 
-## install conda
-RUN wget https://repo.anaconda.com/archive/Anaconda3-2023.03-1-Linux-x86_64.sh && \
-    bash Anaconda3-2023.03-1-Linux-x86_64.sh -b
+# Create and activate a Python virtual environment
+RUN python3 -m venv cenet_env && \
+    . cenet_env/bin/activate && \
+    pip install --upgrade pip
 
-ENV PATH=$PATH:/root/anaconda3/bin/
+# Install Python dependencies
+RUN . cenet_env/bin/activate && \
+    pip install -r requirements_cenet.txt
 
-## install repo / conda environment (repo instructions)
-RUN git clone --depth=1 https://github.com/huixiancheng/CENet /root/CENET
-RUN conda create -n cenet python=3.8 -y && \
-    conda init bash
+# Ensure the virtual environment is activated on login
+RUN echo "source /root/CENet/cenet_env/bin/activate" >> /root/.bashrc
 
-WORKDIR /root/CENET
-
-COPY . .
-
-# make RUN commands use the new environment
-SHELL ["conda", "run", "--no-capture-output", "-n", "cenet", "/bin/bash", "-c"]
-
-RUN yes | apt-get install p7zip-full && \ 
-yes | apt-get install vim && \
-yes | apt-get install tmux 
-
-RUN echo 'conda activate cenet' >> /root/.bashrc
-
-RUN yes | pip install -r requirements_cenet.txt && \
-yes | pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu118
+# Set entrypoint
+CMD ["/bin/bash"]
